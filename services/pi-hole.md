@@ -1,11 +1,11 @@
-# Pi-hole: Centralized Recursive DNS Sinkhole & DHCP Engine
+# Pi-hole: Centralized DNS Sinkhole & DHCP Engine
 
 > [!NOTE]
 > **Legacy Infrastructure Notice:** Pi-hole served as the primary DNS sinkhole and DHCP provider during the initial iterations of this homelab environment. In the current network topology, Pi-hole has been superseded by **OPNsense (running Unbound DNS and native DHCP/SLAAC services)** to centralize perimeter routing and DNS filtering into a single firewall appliance.
 
 ## Overview & Purpose
 
-Pi-hole serves as the primary network-wide DNS sinkhole and internal DHCP engine for the home lab environment. By acting as the authoritative recursive DNS gateway for all local clients, it performs real-time egress telemetry suppression, blocking ad networks, tracking endpoints, and known malicious domains before outbound TCP/UDP connections can be established.
+Pi-hole serves as the primary network-wide DNS sinkhole and internal DHCP engine for the home lab environment. By acting as the authoritative DNS gateway for all local clients, it performs real-time egress telemetry suppression, blocking ad networks, tracking endpoints, and known malicious domains before outbound TCP/UDP connections can be established.
 
 ### Core Engine Architecture: FTLDNS
 Pi-hole operates on **FTLDNS (Faster Than Light DNS)**, an optimized fork of `dnsmasq`. Rather than relying on traditional disk-bound logging, FTLDNS processes and stores DNS queries in shared memory (`/dev/shm`), backed by an SQLite database for persistent long-term analytics. This architecture allows:
