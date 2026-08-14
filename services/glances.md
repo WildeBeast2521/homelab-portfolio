@@ -119,6 +119,7 @@ Glances can inspect host processes and access the Docker API, so a compromise co
 > [!WARNING]
 > **1. Docker Socket Privilege (`/var/run/docker.sock:ro`):**
 > The `:ro` bind option does not impose read-only semantics on requests sent through the Unix socket. A compromised process with usable socket access may be able to issue privileged Docker API operations. The socket mount therefore places Glances inside the host's administrative trust boundary.
+> 
 > **2. Process Table Exposure (`pid: host`):**
 > By running in the host PID namespace, Glances can see every process running on the host, including process arguments (e.g., CLI arguments passed to scripts). If a user passes plaintext credentials via CLI commands, those arguments are exposed in the process table.
 
