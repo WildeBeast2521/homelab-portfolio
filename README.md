@@ -1,97 +1,137 @@
-# Production Home Lab Architecture & Zero-Trust Infrastructure
+# Hybrid Home Lab Infrastructure & Security Architecture
 
-A documented, multi-node hybrid home lab environment designed around **Dual-Stack Network Architecture**, CGNAT bypass strategies, automated infrastructure lifecycle management, and strict micro-segmentation. 
+A documented, multi-node home lab built around dual-stack networking, IPv4 CGNAT mitigation, network segmentation, containerized services, and hybrid cloud connectivity.
 
-This repository details the configuration, operational rationale, security trade-offs, and troubleshooting post-mortems for each core service running across on-premises bare metal and public cloud infrastructure.
+This repository covers the architecture, configuration, security decisions, and incident analysis for services deployed across on-premises hardware and public cloud infrastructure.
 
 ---
 
 ## Core Engineering Objectives
 
-* **Dual-Stack Ingress & CGNAT Mitigation:**
-  * **IPv4 Strategy:** Bypasses Carrier-Grade NAT (CGNAT) without open IPv4 WAN ports using outbound Zero-Trust overlay tunnels (`cloudflared` daemons and Oracle Cloud VPS endpoints).
-  * **IPv6 Strategy:** Leverages native IPv6 Global Unicast Addresses (GUA) for direct edge ingress, controlled strictly via stateful OPNsense IPv6 firewall pinholes.
-* **Micro-Segmentation & Zero Egress:** Untrusted IoT infrastructure (e.g., IP surveillance cameras) is isolated on dedicated VLANs with zero outbound internet access.
-* **Automated Lifecycle Management:** Implemented automated image polling and container updating (`Watchtower`) to minimize vulnerability exposure windows.
-* **Telemetry & Infrastructure Observability:** Centralized health checking and resource metric tracking to identify performance bottlenecks and anomalous container behavior.
+* **Dual-Stack Ingress and CGNAT Mitigation:**
+  * **IPv4 Strategy:** Outbound Cloudflare tunnels and an Oracle Cloud edge node provide access to selected services without relying on inbound IPv4 port forwarding.
+  * **IPv6 Strategy:** Native IPv6 connectivity supports direct ingress through narrowly scoped, stateful OPNsense firewall rules.
+* **Network Segmentation:** Dedicated network segments separate infrastructure, trusted clients, and untrusted IoT devices. Surveillance devices are restricted to approved local traffic.
+* **Container Lifecycle Management:** Docker Compose and Portainer provide declarative service deployment and centralized container administration, with Watchtower handling automated image polling and updates.
+* **Infrastructure Observability:** Uptime Kuma and Glances provide service availability checks and host-level resource monitoring.
+* **Secure Remote Connectivity:** Xray and WireGuard provide encrypted access paths for remote clients and site-to-site connectivity.
+
+---
+
+## Hardware Platform
+
+| Component | Specification | Role |
+| --- | --- | --- |
+| Home Server | Intel Core i7-4790, 4 cores / 8 threads, 8 GB RAM, 120 GB SSD, 500 GB HDD, 1 TB HDD, 1 GbE | Container host, monitoring, synchronization, and internal services |
+| OPNsense Appliance | Dedicated network appliance | Routing, firewall enforcement, VLAN segmentation, DNS, DHCP, and IPv6 policy |
+| Oracle Cloud VPS | Public cloud instance | IPv4 edge node and tunnel endpoint for CGNAT mitigation |
+
+Hardware identifiers, network addresses, interface assignments, and public endpoints are intentionally excluded.
 
 ---
 
 ## Architecture Topology
+
 ```mermaid
+---
+title: Hybrid Home Lab Architecture
+---
 flowchart TD
     classDef cloud fill:#232F3E,stroke:#FF9900,color:#fff;
     classDef firewall fill:#b30000,stroke:#333,color:#fff,stroke-width:2px;
     classDef core fill:#1f4e78,stroke:#333,color:#fff;
     classDef ops fill:#2e75b6,stroke:#333,color:#fff;
     classDef iot fill:#595959,stroke:#333,color:#fff;
+    classDef legacy fill:#6b5b2a,stroke:#c9a227,color:#fff;
     classDef net fill:#333,stroke:#666,color:#fff;
 
-    Internet["🌐 Public Internet"]:::net
+    Internet["Public Internet"]:::net
 
-    subgraph Ingress["Ingress Layer"]
-        CloudEdge["☁️ Cloud Edge<br/>(Oracle VPS / cloudflared)<br/>IPv4 CGNAT Bypass"]:::cloud
-        IPv6Pinhole["🔓 Stateful IPv6 Firewall Pinhole<br/>Native IPv6 Direct Ingress"]:::firewall
+    subgraph Cloud["Cloud and Ingress Layer"]
+        Cloudflare["Cloudflare Edge"]:::cloud
+        Oracle["Oracle Cloud IPv4 Edge"]:::cloud
+        IPv6Ingress["Native IPv6 Ingress"]:::cloud
     end
 
-    OPNsense["🛡️ OPNsense<br/>Perimeter Firewall & Router"]:::firewall
+    OPNsense["OPNsense Perimeter Firewall and Router"]:::firewall
 
-    subgraph CoreEdge["⚡ Core Edge & Networking"]
-        PiHole["Pi-hole DNS"]:::core
-        Proxy3XUI["3X-UI Proxy (VLESS)"]:::core
-        WGDash["WGDashboard"]:::core
+    subgraph HomeServer["Bare-Metal Home Server"]
+        Cloudflared["cloudflared Connector"]:::core
+
+        subgraph CoreServices["Core Networking Services"]
+            Proxy3XUI["3X-UI / Xray"]:::core
+            WGDash["WGDashboard<br/>Control Plane"]:::ops
+            WGData["WireGuard<br/>Data Plane"]:::core
+            RelayTarget["Selected Internal Service"]:::core
+        end
+
+        subgraph ContainerOps["Container Operations and Observability"]
+            Portainer["Portainer"]:::ops
+            Watchtower["Watchtower"]:::ops
+            UptimeKuma["Uptime Kuma"]:::ops
+            Glances["Glances"]:::ops
+            Homepage["Homepage"]:::ops
+        end
+
+        subgraph DataProtection["Data Protection and Replication"]
+            Restic["Restic Snapshots"]:::ops
+            Syncthing["Syncthing Replication"]:::ops
+        end
+
+        PiHole["Pi-hole<br/>Legacy DNS and DHCP"]:::legacy
     end
 
-    subgraph ContainerOps["🐳 Container Ops & Observability"]
-        Portainer["Portainer"]:::ops
-        Watchtower["Watchtower"]:::ops
-        UptimeKuma["Uptime Kuma"]:::ops
-        Glances["Glances"]:::ops
-        Syncthing["Syncthing"]:::ops
-    end
-
-    subgraph IoT["🔒 Isolated IoT VLAN (Zero Egress)"]
+    subgraph IoT["Isolated Surveillance VLAN"]
         Cameras["IP Surveillance Cameras"]:::iot
     end
 
-    Internet -->|IPv4 Traffic| CloudEdge
-    Internet -->|IPv6 Traffic| IPv6Pinhole
+    Internet --> Cloudflare
+    Internet --> Oracle
+    Internet --> IPv6Ingress
 
-    CloudEdge -->|Encrypted Tunnels| OPNsense
-    IPv6Pinhole -->|Native IPv6 Routing| OPNsense
-    OPNsense --> CoreEdge
+    Cloudflared -->|Outbound Encrypted Tunnel| Cloudflare
+    Cloudflare -->|Published Application Traffic| Cloudflared
+    Oracle -->|Encrypted IPv4 Relay Traffic| OPNsense
+    IPv6Ingress -->|Stateful Firewall Rules| OPNsense
+
+    OPNsense -->|Approved IPv6 Ingress| Proxy3XUI
+    OPNsense -->|Encrypted UDP Transit| WGData
+    WGDash -->|Configuration and Peer Management| WGData
+    WGData -->|Decrypted Selected Flow| RelayTarget
     OPNsense --> ContainerOps
-    OPNsense -->|Strict Local Rules Only| IoT
+    Restic -->|Repository Data| Syncthing
+    OPNsense --> PiHole
+    OPNsense -->|Restricted Local Traffic| Cameras
 ```
 
 ---
 
-## Implemented Services & System Documentation
+## Implemented Services and System Documentation
 
-### 1. Network Perimeter & Edge Defense
+### 1. Network Perimeter and Edge Defense
 
-* **[OPNsense](/services/opnsense.md):** Primary edge router enforcing VLAN micro-segmentation, stateful IPv4/IPv6 firewall rules, dynamic prefix delegation, and local routing logic.
-* **[Pi-hole](/services/pi-hole.md):** Internal recursive DNS resolver and sinkhole utilized for egress telemetry filtering, ad-network blocking, and local DNS management.
-* **[3X-UI (Xray / VLESS)](/services/3x-ui.md):** Encrypted proxy panel providing obfuscated VLESS traffic encapsulation. Accessible externally via direct IPv6 pinholing on OPNsense, bypassing IPv4 CGNAT constraints.
+* **[OPNsense](services/opnsense.md) (WIP):** Primary edge router responsible for VLAN segmentation, stateful IPv4 and IPv6 firewall policy, prefix delegation, DNS, DHCP, and internal routing.
+* **[Pi-hole](services/pi-hole.md):** Previous DNS sinkhole and DHCP service, retained as a documented migration and troubleshooting case study.
+* **[3X-UI (Xray / VLESS)](services/3x-ui.md):** Management platform for encrypted Xray proxy services exposed through controlled ingress paths.
 
-### 2. Hybrid Cloud & Zero-Trust Ingress
+### 2. Hybrid Cloud and Remote Ingress
 
-* **[Oracle Cloud Instance](/services/oracle.md):** Public cloud VPS serving as an IPv4 edge node to anchor reverse-proxy tunnels and offload public ingress.
-* **[Cloudflare Tunnel](/services/cloudflare-tunnel.md):** Outbound-only daemon (`cloudflared`) providing public web access to internal applications over IPv4 without port forwarding.
-* **[WGDashboard](/services/wgdashboard.md):** Management interface for site-to-site and client-to-site WireGuard VPN tunnels.
+* **[Oracle Cloud Instance](services/oracle.md):** Public IPv4 edge node used to anchor encrypted connectivity and bypass residential CGNAT limitations.
+* **[Cloudflare Tunnel](services/cloudflare-tunnel.md):** Outbound tunnel connector providing access to selected internal web services without opening inbound IPv4 ports.
+* **[WGDashboard](services/wgdashboard.md):** Management interface for WireGuard client and site-to-site tunnel configurations.
 
-### 3. Container Lifecycle, Observability & Ops
+### 3. Container Operations and Observability
 
-* **[Portainer](/services/portainer.md):** Centralized container management platform for deployment, stack orchestration, and resource limits.
-* **[Watchtower](/services/watchtower.md):** Automated image updates polling registries for upstream patches.
-* **[Uptime Kuma](/services/uptime-kuma.md):** Real-time service availability monitoring with HTTP/TCP status checks.
-* **[Glances](/services/glances.md):** Infrastructure telemetry engine tracking real-time CPU, RAM, disk I/O, and container utilization.
-* **[Homepage](/services/homepage.md):** Unified dashboard displaying real-time metrics and application statuses.
+* **[Portainer](services/portainer.md):** Centralized Docker management for service deployment and stack administration.
+* **[Watchtower](services/watchtower.md):** Automated container image polling and update management.
+* **[Uptime Kuma](services/uptime-kuma.md):** Docker workload and TCP listener monitoring with email alerting and scheduled maintenance handling.
+* **[Glances](services/glances.md):** Host and container telemetry for CPU, memory, storage, network, and process utilization.
+* **[Homepage](services/homepage.md):** Unified internal dashboard for service access and status information.
 
-### 4. Data Sync & Isolated Workloads
+### 4. Data Synchronization and Isolated Workloads
 
-* **[Surveillance Cameras](/services/surveillance.md):** IP camera infrastructure operating on a zero-egress VLAN with local stream ingestion.
-* **[Syncthing](/services/syncthing.md):** Encrypted peer-to-peer file synchronization system for secure off-site data replication.
+* **[Surveillance Cameras](services/surveillance.md) (WIP):** IP camera infrastructure isolated on a dedicated VLAN with restricted network access.
+* **[Syncthing](services/syncthing.md):** Encrypted peer-to-peer replication for protected folder copies and redundant Restic repository storage.
 
 ---
 
@@ -101,6 +141,11 @@ flowchart TD
 .
 ├── README.md
 └── services/
+    ├── assets/
+    │   └── screenshots/
+    │       ├── 3x-ui-public.png
+    │       ├── glances-public.png
+    │       └── pi-hole-public.png
     ├── 3x-ui.md
     ├── cloudflare-tunnel.md
     ├── glances.md
@@ -114,17 +159,17 @@ flowchart TD
     ├── uptime-kuma.md
     ├── watchtower.md
     └── wgdashboard.md
-
 ```
 
-Each document inside `/services/` follows a standardized structure:
+Each service document follows a common structure:
 
-1. **Overview & Purpose**
-2. **Deployment Architecture** (Docker Compose / System Configs)
-3. **Security Rationale & Trade-offs** (e.g., IPv6 Firewall Rules vs. ZTNA Tunnels)
-4. **Failure Modes, Incidents & Resolution**
+1. **Overview and Purpose**
+2. **Deployment Architecture**
+3. **Security Rationale and Trade-offs**
+4. **Failure Modes and Resolution**
+5. **Incident Post-Mortems, where available**
 
 ---
 
 > [!NOTE]
-> **Repository Status:** This architecture documentation is actively under development. Some service post-mortems, configurations, and deployment guides may be incomplete.
+> **Repository Status:** This repository is maintained alongside the lab and updated when architecture, configuration, or recovery procedures change. OPNsense and surveillance documentation remain marked as work in progress.
